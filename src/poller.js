@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { execFile } from 'child_process';
 import { Parser } from 'xml2js';
 
 const DEFAULT_CHANNEL_ID = 'UCPF-oYb2-xN5FbCXy0167Gg'; // Roel Van de Paar
@@ -109,6 +110,14 @@ async function pollOnce() {
 
   if (isNewVideo) {
     logLatestVideo('New upload detected', latestVideo);
+    const scriptPath = path.resolve(__dirname, '..', 'getTranscript.py');
+    execFile('python', [scriptPath, latestVideo.id], (err, stdout, stderr) => {
+      if (err) {
+        console.error('Transcript script failed:', stderr || err.message);
+        return;
+      }
+      console.log('Transcript result:', stdout);
+    });
   } else {
     logLatestVideo('No new uploads yet', latestVideo);
   }
