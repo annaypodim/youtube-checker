@@ -2,80 +2,96 @@ import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { execFile } from 'child_process';
-import { Parser } from 'xml2js';
 
-const DEFAULT_CHANNEL_ID = 'UCPF-oYb2-xN5FbCXy0167Gg'; // Roel Van de Paar
+const DEFAULT_CHANNEL_ID = 'UC_x5XG1OV2P6uZZ5FSM9Ttw' // Roel Van de Paar
 const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS ?? 60 * 1000);
 const CHANNEL_ID = process.env.YT_CHANNEL_ID ?? DEFAULT_CHANNEL_ID;
+const YT_API_KEY = process.env.YT_API_KEY;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const STATE_FILE = path.resolve(
   process.env.STATE_FILE ?? path.join(__dirname, '..', 'state', 'latest-video.json')
 );
-const parser = new Parser({ explicitArray: false });
 const RUN_ONCE = process.argv.includes('--once');
 
-async function fetchLatestVideo() {
-  const feedUrl = `https://www.youtube.com/feeds/videos.xml?channel_id=${CHANNEL_ID}`;
-  const response = await fetch(feedUrl);
-
-  if (!response.ok) {
-    throw new Error(`YouTube feed request failed: ${response.status} ${response.statusText}`);
-  }
-
-  const xml = await response.text();
-  const parsed = await parser.parseStringPromise(xml);
-  const entries = parsed?.feed?.entry;
-
-  if (!entries) {
-    throw new Error('YouTube feed returned no entries.');
-  }
-
-  const normalizedEntries = (Array.isArray(entries) ? entries : [entries])
-    .map((entry) => normalizeEntry(entry))
-    // Sort by published date so metadata edits to older videos do not appear as new uploads.
-    .sort((a, b) => getPublishedTimestamp(b.publishedAt) - getPublishedTimestamp(a.publishedAt));
-  const latestEntry = normalizedEntries[0];
-
-  if (!latestEntry) {
-    throw new Error('Unable to find the latest video in feed.');
-  }
-
-  return latestEntry;
+if (!YT_API_KEY) {
+  throw new Error('YT_API_KEY environment variable is required.');
 }
 
-function normalizeEntry(entry) {
+// For standard channel IDs (UC...), the uploads playlist id is the same with UC -> UU.
+function uploadsPlaylistId(channelId) {
+  if (channelId.startsWith('UC')) {
+    return 'UU' + channelId.slice(2);
+  }
+  return null;
+}
+
+async function resolveUploadsPlaylistId(channelId) {
+  const cached = uploadsPlaylistId(channelId);
+  if (cached) return cached;
+
+  const url = new URL('https://www.googleapis.com/youtube/v3/channels');
+  url.searchParams.set('part', 'contentDetails');
+  url.searchParams.set('id', channelId);
+  url.searchParams.set('key', YT_API_KEY);
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`YouTube channels.list failed: ${response.status} ${response.statusText}`);
+  }
+  const data = await response.json();
+  const playlistId = data?.items?.[0]?.contentDetails?.relatedPlaylists?.uploads;
+  if (!playlistId) {
+    throw new Error(`Unable to resolve uploads playlist for channel ${channelId}.`);
+  }
+  return playlistId;
+}
+
+async function fetchLatestVideo() {
+  const playlistId = await resolveUploadsPlaylistId(CHANNEL_ID);
+  const url = new URL('https://www.googleapis.com/youtube/v3/playlistItems');
+  url.searchParams.set('part', 'snippet,contentDetails');
+  url.searchParams.set('playlistId', playlistId);
+  url.searchParams.set('maxResults', '5');
+  url.searchParams.set('key', YT_API_KEY);
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`YouTube playlistItems.list failed: ${response.status} ${response.statusText}`);
+  }
+
+  const data = await response.json();
+  const items = data?.items;
+  if (!items || items.length === 0) {
+    throw new Error('YouTube API returned no playlist items.');
+  }
+
+  const normalized = items
+    .map(normalizeItem)
+    // Sort by published date so metadata edits to older videos do not appear as new uploads.
+    .sort((a, b) => getPublishedTimestamp(b.publishedAt) - getPublishedTimestamp(a.publishedAt));
+
+  const latest = normalized[0];
+  if (!latest) {
+    throw new Error('Unable to find the latest video.');
+  }
+  return latest;
+}
+
+function normalizeItem(item) {
+  const videoId = item.contentDetails?.videoId ?? item.snippet?.resourceId?.videoId;
   return {
-    id: entry['yt:videoId'],
-    title: entry.title,
-    publishedAt: entry.published,
-    updatedAt: entry.updated,
-    link: extractLink(entry.link),
-    author: entry.author?.name,
-    raw: entry,
+    id: videoId,
+    title: item.snippet?.title,
+    publishedAt: item.contentDetails?.videoPublishedAt ?? item.snippet?.publishedAt,
+    link: videoId ? `https://www.youtube.com/watch?v=${videoId}` : undefined,
+    author: item.snippet?.videoOwnerChannelTitle ?? item.snippet?.channelTitle,
+    raw: item,
   };
 }
 
 function getPublishedTimestamp(dateString) {
   const timestamp = dateString ? Date.parse(dateString) : NaN;
   return Number.isNaN(timestamp) ? 0 : timestamp;
-}
-
-function extractLink(linkNode) {
-  if (!linkNode) {
-    return undefined;
-  }
-
-  if (typeof linkNode === 'string') {
-    return linkNode;
-  }
-
-  if (Array.isArray(linkNode)) {
-    const alternate = linkNode.find((entry) => entry?.$.rel === 'alternate');
-    return alternate?.$.href ?? linkNode[0]?.$.href;
-  }
-
-  return linkNode?.$.href;
 }
 
 async function readState() {
