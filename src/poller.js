@@ -56,7 +56,8 @@ async function fetchLatestVideo() {
 
   const response = await fetch(url);
   if (!response.ok) {
-    throw new Error(`YouTube playlistItems.list failed: ${response.status} ${response.statusText}`);
+    const body = await response.text();
+    throw new Error(`YouTube playlistItems.list failed: ${response.status} ${response.statusText} - ${body}`);
   }
 
   const data = await response.json();
@@ -127,7 +128,14 @@ async function pollOnce() {
   if (isNewVideo) {
     logLatestVideo('New upload detected', latestVideo);
     const scriptPath = path.resolve(__dirname, '..', 'getTranscript.py');
-    execFile('python', [scriptPath, latestVideo.id], (err, stdout, stderr) => {
+    const args = [
+      scriptPath,
+      latestVideo.id,
+      '--title', latestVideo.title ?? '',
+      '--channel', latestVideo.author ?? '',
+      '--published', latestVideo.publishedAt ?? '',
+    ];
+    execFile('python', args, (err, stdout, stderr) => {
       if (err) {
         console.error('Transcript script failed:', stderr || err.message);
         return;
