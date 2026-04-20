@@ -1,14 +1,20 @@
 {
-  "name": "test-polling",
+  "name": "channel-digest",
   "version": "1.0.0",
-  "main": "index.js",
   "scripts": {
-    "start": "node --env-file=.env src/poller.js"
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "poller:start": "node --env-file=.env src/poller.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "description": "Polling service that watches a YouTube channel and stores the latest upload.",
-  "dependencies": {},
+  "description": "Frontend subscription flow and polling service for YouTube channel summaries.",
+  "dependencies": {
+    "next": "^15.3.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
   "type": "module"
 }
