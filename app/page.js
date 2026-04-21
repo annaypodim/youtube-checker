@@ -48,7 +48,7 @@ export default function HomePage() {
   return (
     <main className="page-shell">
       <section className="hero-card">
-        <h1>ChannelDigest</h1>
+        <h1>Channel Digest</h1>
         <p className="hero-copy">
           Subscribe with your email and the YouTube channel you care about, and we&apos;ll send you a digest of the
           latest videos posted there.
