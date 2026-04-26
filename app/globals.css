@@ -41,9 +41,9 @@ input {
 .page-shell {
   display: grid;
   gap: 1.5rem;
-  max-width: 1120px;
+  max-width: 1280px;
   margin: 0 auto;
-  padding: 56px 24px;
+  padding: 36px 32px;
 }
 
 .hero-card,
@@ -57,16 +57,25 @@ input {
 }
 
 .hero-card {
-  padding: 40px;
+  padding: 36px 44px;
   position: relative;
   overflow: hidden;
 }
 
 .content-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 400px);
   gap: 1.5rem;
-  align-items: start;
+  align-items: stretch;
+}
+
+.info-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.info-card .feature-strip {
+  flex: 1;
 }
 
 .hero-card::after {
@@ -95,12 +104,12 @@ h2 {
 }
 
 h1 {
-  font-size: clamp(2.6rem, 7vw, 5.4rem);
+  font-size: clamp(2.2rem, 4.4vw, 3.6rem);
   max-width: none;
 }
 
 h2 {
-  font-size: clamp(2rem, 4vw, 3rem);
+  font-size: clamp(1.7rem, 3.2vw, 2.6rem);
 }
 
 .hero-copy,
@@ -114,15 +123,15 @@ input::placeholder,
 }
 
 .hero-copy {
-  max-width: 32rem;
-  margin: 22px 0 0;
+  max-width: 48rem;
+  margin: 18px 0 0;
   font-size: 1.06rem;
-  line-height: 1.7;
+  line-height: 1.65;
   color: var(--muted);
 }
 
 .feature-strip div {
-  padding: 18px;
+  padding: 16px;
   background: rgba(255, 250, 242, 0.7);
   border-radius: 18px;
   border: 1px solid rgba(63, 77, 52, 0.1);
@@ -143,17 +152,17 @@ input::placeholder,
 }
 
 .form-card {
-  padding: 32px;
+  padding: 32px 36px;
 }
 
 .info-card {
-  padding: 32px;
+  padding: 32px 36px;
 }
 
 .feature-strip {
   display: grid;
-  gap: 1rem;
-  margin-top: 24px;
+  gap: 0.9rem;
+  margin-top: 20px;
 }
 
 .form-heading p {
@@ -164,8 +173,8 @@ input::placeholder,
 
 .subscribe-form {
   display: grid;
-  gap: 0.75rem;
-  margin-top: 28px;
+  gap: 0.7rem;
+  margin-top: 22px;
 }
 
 label {
@@ -177,7 +186,7 @@ input {
   width: 100%;
   border: 1px solid rgba(63, 77, 52, 0.16);
   border-radius: 16px;
-  padding: 15px 16px;
+  padding: 13px 16px;
   background: var(--surface-strong);
   color: var(--text);
   transition: border-color 160ms ease, transform 160ms ease, box-shadow 160ms ease;
@@ -191,10 +200,10 @@ input:focus {
 }
 
 button {
-  margin-top: 8px;
+  margin-top: 6px;
   border: 0;
   border-radius: 999px;
-  padding: 16px 22px;
+  padding: 14px 22px;
   background: linear-gradient(135deg, var(--accent), var(--accent-dark));
   color: white;
   font-family: Arial, sans-serif;
@@ -208,6 +217,28 @@ button:hover {
   box-shadow: 0 10px 22px rgba(140, 53, 29, 0.24);
 }
 
+button.secondary {
+  background: transparent;
+  color: var(--accent-dark);
+  border: 1px solid rgba(140, 53, 29, 0.4);
+}
+
+button.secondary:hover {
+  background: rgba(184, 76, 42, 0.08);
+  box-shadow: none;
+}
+
+.form-actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 6px;
+}
+
+.form-actions button {
+  margin-top: 0;
+  flex: 1;
+}
+
 .field-error {
   margin: 0 0 6px;
   font-size: 0.88rem;
@@ -215,9 +246,9 @@ button:hover {
 }
 
 .status-panel {
-  margin-top: 22px;
-  border-radius: 18px;
-  padding: 18px;
+  margin-top: 18px;
+  border-radius: 16px;
+  padding: 14px 16px;
   border: 1px solid transparent;
 }
 
