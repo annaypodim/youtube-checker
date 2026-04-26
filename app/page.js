@@ -13,17 +13,14 @@ export default function HomePage() {
   const [serverMessage, setServerMessage] = useState('');
   const [status, setStatus] = useState('idle');
 
-  async function handleSubmit(event) {
-    event.preventDefault();
+  async function submitTo(endpoint) {
     setStatus('idle');
     setErrors({});
     setServerMessage('');
 
-    const response = await fetch('/api/subscribe', {
+    const response = await fetch(endpoint, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(form),
     });
 
@@ -39,6 +36,15 @@ export default function HomePage() {
     setStatus('success');
     setServerMessage(payload.message);
     setForm(initialForm);
+  }
+
+  function handleSubmit(event) {
+    event.preventDefault();
+    submitTo('/api/subscribe');
+  }
+
+  function handleUnsubscribe() {
+    submitTo('/api/unsubscribe');
   }
 
   function updateField(field, value) {
@@ -97,7 +103,12 @@ export default function HomePage() {
               </p>
             ) : null}
 
-            <button type="submit">Start tracking</button>
+            <div className="form-actions">
+              <button type="submit">Start tracking</button>
+              <button type="button" className="secondary" onClick={handleUnsubscribe}>
+                Unsubscribe
+              </button>
+            </div>
           </form>
 
           {(serverMessage || status === 'success') && (

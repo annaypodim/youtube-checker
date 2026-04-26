@@ -1,28 +1,19 @@
-import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { execFile } from 'child_process';
+import { getSupabaseAdmin } from './supabase.js';
 
-const DEFAULT_CHANNEL_ID = 'UC_x5XG1OV2P6uZZ5FSM9Ttw' // Roel Van de Paar
 const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS ?? 60 * 1000);
-const CHANNEL_ID = process.env.YT_CHANNEL_ID ?? DEFAULT_CHANNEL_ID;
 const YT_API_KEY = process.env.YT_API_KEY;
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const STATE_FILE = path.resolve(
-  process.env.STATE_FILE ?? path.join(__dirname, '..', 'state', 'latest-video.json')
-);
 const RUN_ONCE = process.argv.includes('--once');
 
-if (!YT_API_KEY) {
-  throw new Error('YT_API_KEY environment variable is required.');
-}
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-// For standard channel IDs (UC...), the uploads playlist id is the same with UC -> UU.
+if (!YT_API_KEY) throw new Error('YT_API_KEY environment variable is required.');
+
 function uploadsPlaylistId(channelId) {
-  if (channelId.startsWith('UC')) {
-    return 'UU' + channelId.slice(2);
-  }
+  if (channelId.startsWith('UC')) return 'UU' + channelId.slice(2);
   return null;
 }
 
@@ -40,14 +31,12 @@ async function resolveUploadsPlaylistId(channelId) {
   }
   const data = await response.json();
   const playlistId = data?.items?.[0]?.contentDetails?.relatedPlaylists?.uploads;
-  if (!playlistId) {
-    throw new Error(`Unable to resolve uploads playlist for channel ${channelId}.`);
-  }
+  if (!playlistId) throw new Error(`Unable to resolve uploads playlist for channel ${channelId}.`);
   return playlistId;
 }
 
-async function fetchLatestVideo() {
-  const playlistId = await resolveUploadsPlaylistId(CHANNEL_ID);
+async function fetchLatestVideo(channelId) {
+  const playlistId = await resolveUploadsPlaylistId(channelId);
   const url = new URL('https://www.googleapis.com/youtube/v3/playlistItems');
   url.searchParams.set('part', 'snippet,contentDetails');
   url.searchParams.set('playlistId', playlistId);
@@ -57,25 +46,18 @@ async function fetchLatestVideo() {
   const response = await fetch(url);
   if (!response.ok) {
     const body = await response.text();
-    throw new Error(`YouTube playlistItems.list failed: ${response.status} ${response.statusText} - ${body}`);
+    throw new Error(`playlistItems.list ${response.status}: ${body}`);
   }
 
   const data = await response.json();
-  const items = data?.items;
-  if (!items || items.length === 0) {
-    throw new Error('YouTube API returned no playlist items.');
-  }
+  const items = data?.items ?? [];
+  if (items.length === 0) return null;
 
   const normalized = items
     .map(normalizeItem)
-    // Sort by published date so metadata edits to older videos do not appear as new uploads.
     .sort((a, b) => getPublishedTimestamp(b.publishedAt) - getPublishedTimestamp(a.publishedAt));
 
-  const latest = normalized[0];
-  if (!latest) {
-    throw new Error('Unable to find the latest video.');
-  }
-  return latest;
+  return normalized[0] ?? null;
 }
 
 function normalizeItem(item) {
@@ -86,93 +68,117 @@ function normalizeItem(item) {
     publishedAt: item.contentDetails?.videoPublishedAt ?? item.snippet?.publishedAt,
     link: videoId ? `https://www.youtube.com/watch?v=${videoId}` : undefined,
     author: item.snippet?.videoOwnerChannelTitle ?? item.snippet?.channelTitle,
-    raw: item,
   };
 }
 
 function getPublishedTimestamp(dateString) {
-  const timestamp = dateString ? Date.parse(dateString) : NaN;
-  return Number.isNaN(timestamp) ? 0 : timestamp;
+  const t = dateString ? Date.parse(dateString) : NaN;
+  return Number.isNaN(t) ? 0 : t;
 }
 
-async function readState() {
-  try {
-    const contents = await fs.readFile(STATE_FILE, 'utf-8');
-    return JSON.parse(contents);
-  } catch (error) {
-    if (error.code === 'ENOENT') {
-      return null;
+async function loadActiveChannels(supabase) {
+  const { data, error } = await supabase
+    .from('subscriptions')
+    .select('channel_id, email')
+    .not('channel_id', 'is', null);
+  if (error) throw new Error(`Loading subscriptions failed: ${error.message}`);
+
+  const map = new Map();
+  for (const row of data ?? []) {
+    if (!row.channel_id) continue;
+    if (!map.has(row.channel_id)) map.set(row.channel_id, []);
+    map.get(row.channel_id).push(row.email);
+  }
+  return map;
+}
+
+async function getChannelState(supabase, channelId) {
+  const { data, error } = await supabase
+    .from('channel_state')
+    .select('last_video_id')
+    .eq('channel_id', channelId)
+    .maybeSingle();
+  if (error) throw new Error(`channel_state read failed: ${error.message}`);
+  return data?.last_video_id ?? null;
+}
+
+async function saveChannelState(supabase, channelId, lastVideoId) {
+  const { error } = await supabase.from('channel_state').upsert({
+    channel_id: channelId,
+    last_video_id: lastVideoId,
+    last_checked_at: new Date().toISOString(),
+  });
+  if (error) throw new Error(`channel_state write failed: ${error.message}`);
+}
+
+function dispatchEmails(video, recipients) {
+  if (recipients.length === 0) return;
+  const scriptPath = path.resolve(__dirname, '..', 'getTranscript.py');
+  const args = [
+    scriptPath,
+    video.id,
+    '--title', video.title ?? '',
+    '--channel', video.author ?? '',
+    '--published', video.publishedAt ?? '',
+    '--to', recipients.join(','),
+  ];
+  execFile('python', args, (err, stdout, stderr) => {
+    if (err) {
+      console.error('Transcript script failed:', stderr || err.message);
+      return;
     }
-    throw error;
-  }
+    if (stdout) console.log('Transcript script:', stdout.trim());
+  });
 }
 
-async function writeState(state) {
-  await fs.mkdir(path.dirname(STATE_FILE), { recursive: true });
-  await fs.writeFile(STATE_FILE, JSON.stringify(state, null, 2));
-}
-
-async function pollOnce() {
-  const latestVideo = await fetchLatestVideo();
-  const previousState = await readState();
-  const nextState = {
-    channelId: CHANNEL_ID,
-    lastVideoId: latestVideo.id,
-    lastVideo: latestVideo,
-    lastCheckedAt: new Date().toISOString(),
-  };
-
-  const isNewVideo = previousState?.lastVideoId !== latestVideo.id;
-  await writeState(nextState);
-
-  if (isNewVideo) {
-    logLatestVideo('New upload detected', latestVideo);
-    const scriptPath = path.resolve(__dirname, '..', 'getTranscript.py');
-    const args = [
-      scriptPath,
-      latestVideo.id,
-      '--title', latestVideo.title ?? '',
-      '--channel', latestVideo.author ?? '',
-      '--published', latestVideo.publishedAt ?? '',
-    ];
-    execFile('python', args, (err, stdout, stderr) => {
-      if (err) {
-        console.error('Transcript script failed:', stderr || err.message);
-        return;
-      }
-      console.log('Transcript result:', stdout);
-    });
-  } else {
-    logLatestVideo('No new uploads yet', latestVideo);
-  }
-}
-
-function logLatestVideo(message, video) {
-  const output = {
-    status: message,
-    channelId: CHANNEL_ID,
-    videoId: video.id,
-    title: video.title,
-    publishedAt: video.publishedAt,
-    url: video.link,
-  };
-
-  console.log(`\n${new Date().toISOString()} - ${message}`);
-  console.log(JSON.stringify(output, null, 2));
-}
-
-async function main() {
-  console.log(`Starting poller for channel ${CHANNEL_ID}. Interval: ${POLL_INTERVAL_MS / 1000}s`);
-  await pollOnce();
-  if (RUN_ONCE) {
-    console.log('Run-once mode enabled. Exiting after initial poll.');
+async function pollChannel(supabase, channelId, recipients) {
+  const latest = await fetchLatestVideo(channelId);
+  if (!latest?.id) {
+    console.log(`[${channelId}] no videos found`);
     return;
   }
 
+  const previous = await getChannelState(supabase, channelId);
+  await saveChannelState(supabase, channelId, latest.id);
+
+  if (previous === null) {
+    // First time we see this channel — record the latest as the baseline; do not email backfill.
+    console.log(`[${channelId}] baseline set to ${latest.id} (${latest.title}) — no email sent`);
+    return;
+  }
+
+  if (previous !== latest.id) {
+    console.log(`[${channelId}] new upload ${latest.id} (${latest.title}) -> ${recipients.length} subscriber(s)`);
+    dispatchEmails(latest, recipients);
+  } else {
+    console.log(`[${channelId}] no new uploads`);
+  }
+}
+
+async function pollOnce() {
+  const supabase = getSupabaseAdmin();
+  const channels = await loadActiveChannels(supabase);
+  if (channels.size === 0) {
+    console.log('No active subscriptions yet.');
+    return;
+  }
+
+  for (const [channelId, recipients] of channels) {
+    try {
+      await pollChannel(supabase, channelId, recipients);
+    } catch (error) {
+      console.error(`[${channelId}] poll failed:`, error.message);
+    }
+  }
+}
+
+async function main() {
+  console.log(`Starting poller. Interval: ${POLL_INTERVAL_MS / 1000}s`);
+  await pollOnce();
+  if (RUN_ONCE) return;
+
   setInterval(() => {
-    pollOnce().catch((error) => {
-      console.error('Polling failed', error);
-    });
+    pollOnce().catch((error) => console.error('Polling failed', error));
   }, POLL_INTERVAL_MS);
 }
 
