@@ -16,8 +16,12 @@ gmailAddress = os.getenv("GMAIL_ADDRESS")
 gmailAppPassword = os.getenv("GMAIL_APP_PASSWORD")
 notifyEmail = os.getenv("NOTIFY_EMAIL")
 
+ID = ""
+
 
 def getTranscript(id):
+    global ID
+    ID = id
     params = {
     "engine": "youtube_video_transcript",
     "v": id,
@@ -29,10 +33,12 @@ def getTranscript(id):
 
     transcript = results.get("transcript", [])
     transcriptStr = ""
+    transcriptWithTimestamps = ""
     for entry in transcript:
         #print(f"{entry['start_time_text']}: {entry['snippet']}")
-        transcriptStr += entry['snippet']
-    return transcriptStr
+        transcriptStr += entry['snippet'] + " "
+        transcriptWithTimestamps += entry['start_time_text'] + ": " + entry['snippet'] + "\n"
+    return transcriptStr.strip(), transcriptWithTimestamps.strip()
 
 def geminiSummarize(transcript):
     client = gemini.Client(
@@ -111,6 +117,61 @@ def geminiSummarize(transcript):
     text = re.sub(r"\s*```$", "", text)
     return text
 
+def geminiGetClip(summary, transcriptWithTimestamps):
+    client = gemini.Client(
+        api_key=geminiKey,
+        http_options={'api_version': 'v1beta'}
+    )
+
+    prompt = (
+        "You are an expert audio/video transcript analyst and content curator. Your task is to extract the most interesting, engaging, or \"cool\" moments mentioned in a provided summary and map them to their exact timestamps in the transcript.\n\n"
+        "Below, you are given a <summary> of an event and the full <transcript> of that event. Each line in the transcript begins with a start time. \n\n"
+        "Summary: " + summary + "\n\n"
+        "Transcript: " + transcriptWithTimestamps + "\n\n"
+        "### Instructions:\n"
+        "1. Analyze the <summary> to identify the most compelling, interesting, or cool moments. You do NOT need to cover every point in the summary—focus only on the absolute best highlights.\n"
+        "2. Locate ALL continuous blocks of dialogue in the <transcript> that correspond to these selected highlight points. A single highlight might be discussed in multiple separate portions of the transcript.\n"
+        "3. For each selected highlight, create a concise title strictly between 5 and 10 words long that captures why the moment is interesting.\n"
+        "4. Determine the starting timestamp (the time of the first line discussing the point) and the ending timestamp (the start time of the line immediately following the end of the point) for EVERY portion where that highlight is discussed.\n"
+        "5. Append multiple timestamp pairs for the same highlight using a semicolon (;) as the separator. \n"
+        "6. You must output NOTHING BUT the formatted text. Do not include any conversational filler, markdown formatting, headers, or explanations before or after the data. \n\n"
+        "### Output Format:\n"
+        "Your entire response must strictly adhere to the following exact format, with one highlight per line. \n\n"
+        "If the highlight is discussed in one continuous portion:\n"
+        "[5-10 Word Title],[Start Time],[End Time]\n\n"
+        "If the highlight is discussed in multiple separate portions:\n"
+        "[5-10 Word Title],[Start Time 1],[End Time 1];[Start Time 2],[End Time 2];[Start Time 3],[End Time 3]"
+    )
+        
+
+    urls = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt,
+    )
+
+    text = urls.text.strip()
+    text = re.sub(r"^```.*?\n", "", text)
+    text = re.sub(r"\n```$", "", text)
+    
+    # Split the urls variable (text) by semi colon, then split each by comma.
+    # We carry the title from the first segment of each line if multiple exist.
+    results = []
+    segments = text.replace('\n', ';').split(';')
+    current_title = ""
+    for segment in segments:
+        segment = segment.strip()
+        if not segment: continue
+        
+        parts = [p.strip() for p in segment.split(',')]
+        if len(parts) >= 3:
+            # New highlight: Title, S1, E1
+            current_title = ",".join(parts[:-2])
+            results.append([current_title, parts[-2], parts[-1]])
+        elif len(parts) == 2 and current_title:
+            # Continuation segment: S2, E2
+            results.append([current_title, parts[0], parts[1]])
+            
+    return results
 
 def formatPublished(iso_string):
     if not iso_string:
@@ -122,7 +183,24 @@ def formatPublished(iso_string):
         return iso_string
 
 
-def buildEmailBody(summary_html, title, channel, published):
+def timestamp_to_seconds(ts):
+    if not ts: return 0
+    # Remove any unwanted characters like brackets
+    ts = ts.strip('[] ')
+    parts = ts.split(':')
+    try:
+        if len(parts) == 3: # H:M:S
+            return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+        elif len(parts) == 2: # M:S
+            return int(parts[0]) * 60 + int(parts[1])
+        elif len(parts) == 1: # S
+            return int(parts[0])
+    except ValueError:
+        return 0
+    return 0
+
+
+def buildEmailBody(summary_html, title, channel, published, clips, video_id):
     safe_title = html.escape(title or "New YouTube Video")
     safe_channel = html.escape(channel or "")
     pretty_published = html.escape(formatPublished(published))
@@ -139,12 +217,27 @@ def buildEmailBody(summary_html, title, channel, published):
         + (f'<p style="margin:0 0 22px 0; color:#566252;">{meta_line}</p>' if meta_line else "")
     )
 
+    clips_html = ""
+    if clips:
+        clips_html += '<p><b>Interesting Clips</b></p>'
+        for clip in clips:
+            clip_title, start_ts, end_ts = clip
+            start_sec = timestamp_to_seconds(start_ts)
+            end_sec = timestamp_to_seconds(end_ts)
+            # Using localhost:3000 as a default base for Next.js
+            url = f"http://localhost:3000/clip/{video_id}?start={start_sec}&end={end_sec}"
+            clips_html += (
+                f'<p style="margin-bottom: 4px;"><b>{html.escape(clip_title)}</b></p>'
+                f'<p style="margin-top: 0; margin-bottom: 16px;"><a href="{url}">{url}</a></p>'
+            )
+
     return (
         '<div style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', '
         "Helvetica, Arial, sans-serif; font-size: 14px; line-height: 1.55; "
         'color: #1f2a1f; max-width: 680px;">'
         + header
         + summary_html
+        + clips_html
         + "</div>"
     )
 
@@ -176,9 +269,11 @@ if __name__ == "__main__":
     if not recipients and notifyEmail:
         recipients = [notifyEmail]
 
-    transcript = getTranscript(args.video_id)
+    transcript, transcriptWithTimestamps = getTranscript(args.video_id)
     summary = geminiSummarize(transcript)
-    body = buildEmailBody(summary, args.title, args.channel, args.published)
+    clips = geminiGetClip(summary, transcriptWithTimestamps)
+    
+    body = buildEmailBody(summary, args.title, args.channel, args.published, clips, args.video_id)
 
     subject_bits = []
     if args.channel:
