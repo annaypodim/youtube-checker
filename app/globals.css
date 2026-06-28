@@ -295,3 +295,14 @@ button.secondary:hover {
     padding: 24px;
   }
 }
+
+/* ── Landing page link hover states ─────────────────────────── */
+a[href="/login"]:hover {
+  transform: translateY(-1px);
+}
+
+@media (max-width: 600px) {
+  nav {
+    padding: 16px 20px;
+  }
+}

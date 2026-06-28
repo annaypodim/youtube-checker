@@ -80,7 +80,8 @@ async function loadActiveChannels(supabase) {
   const { data, error } = await supabase
     .from('subscriptions')
     .select('channel_id, email')
-    .not('channel_id', 'is', null);
+    .not('channel_id', 'is', null)
+    .eq('status', 'verified');
   if (error) throw new Error(`Loading subscriptions failed: ${error.message}`);
 
   const map = new Map();
@@ -122,7 +123,7 @@ function dispatchEmails(video, recipients) {
     '--published', video.publishedAt ?? '',
     '--to', recipients.join(','),
   ];
-  execFile('python', args, (err, stdout, stderr) => {
+  execFile('python3', args, (err, stdout, stderr) => {
     if (err) {
       console.error('Transcript script failed:', stderr || err.message);
       return;

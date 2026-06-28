@@ -241,6 +241,42 @@ def buildEmailBody(summary_html, title, channel, published, clips, video_id):
         + "</div>"
     )
 
+def authEmail(recipients, channel, verify_url):
+    if not recipients:
+        print("No recipients provided; skipping send.")
+        return
+
+    safe_channel = html.escape(channel or "your channel")
+    safe_url = html.escape(verify_url)
+
+    body = (
+        '<div style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', '
+        'Helvetica, Arial, sans-serif; font-size: 14px; line-height: 1.55; '
+        'color: #1f2a1f; max-width: 680px;">'
+        f'<h2 style="margin: 0 0 6px 0;">Verify your Channel Digest subscription</h2>'
+        f'<p style="margin: 0 0 16px 0;">You requested email summaries for '
+        f'<b>{safe_channel}</b>. Click the button below to confirm your address '
+        'and activate your subscription.</p>'
+        f'<p><a href="{safe_url}" style="display:inline-block; padding: 10px 20px; '
+        'background:#2563eb; color:#fff; border-radius:6px; text-decoration:none; '
+        f'font-weight:600;">Verify my subscription</a></p>'
+        f'<p style="margin-top:16px; color:#555;">Or copy this link into your browser:</p>'
+        f'<p style="word-break:break-all;"><a href="{safe_url}" style="color:#2563eb;">{safe_url}</a></p>'
+        '<p style="color:#888; font-size:12px; margin-top:24px;">'
+        'If you did not request this, you can safely ignore this email.</p>'
+        '</div>'
+    )
+
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        server.login(gmailAddress, gmailAppPassword)
+        for recipient in recipients:
+            msg = MIMEText(body, "html")
+            msg["Subject"] = f"Verify your Channel Digest subscription for {channel or 'your channel'}"
+            msg["From"] = gmailAddress
+            msg["To"] = recipient
+            server.send_message(msg)
+            print(f"Authentication email sent to {recipient}")
+
 def sendEmail(body, recipients, subject="New YouTube Video Summary"):
     if not recipients:
         print("No recipients provided; skipping send.")
@@ -258,27 +294,39 @@ def sendEmail(body, recipients, subject="New YouTube Video Summary"):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("video_id")
+    # --auth-mode sends a verification email instead of a transcript summary.
+    parser.add_argument("--auth-mode", action="store_true", help="Send a verification email instead of a summary.")
+    parser.add_argument("video_id", nargs="?", default="", help="YouTube video ID (required in summary mode).")
     parser.add_argument("--title", default="")
     parser.add_argument("--channel", default="")
     parser.add_argument("--published", default="")
     parser.add_argument("--to", default="", help="Comma-separated recipient emails. Falls back to NOTIFY_EMAIL.")
+    # Auth-mode-only args:
+    parser.add_argument("--token", default="", help="Verification UUID token (auth mode only).")
+    parser.add_argument("--base-url", default="http://localhost:3000", help="Base URL of the web app (auth mode only).")
     args = parser.parse_args()
 
     recipients = [e.strip() for e in args.to.split(",") if e.strip()]
     if not recipients and notifyEmail:
         recipients = [notifyEmail]
 
-    transcript, transcriptWithTimestamps = getTranscript(args.video_id)
-    summary = geminiSummarize(transcript)
-    clips = geminiGetClip(summary, transcriptWithTimestamps)
-    
-    body = buildEmailBody(summary, args.title, args.channel, args.published, clips, args.video_id)
+    if args.auth_mode:
+        verify_url = f"{args.base_url.rstrip('/')}/verify?token={args.token}"
+        authEmail(recipients, args.channel, verify_url)
+    else:
+        if not args.video_id:
+            raise SystemExit("video_id is required in summary mode.")
 
-    subject_bits = []
-    if args.channel:
-        subject_bits.append(args.channel)
-    subject_bits.append(args.title or "New YouTube Video")
-    subject = " — ".join(subject_bits)
+        transcript, transcriptWithTimestamps = getTranscript(args.video_id)
+        summary = geminiSummarize(transcript)
+        clips = geminiGetClip(summary, transcriptWithTimestamps)
 
-    sendEmail(body, recipients, subject=subject)
+        body = buildEmailBody(summary, args.title, args.channel, args.published, clips, args.video_id)
+
+        subject_bits = []
+        if args.channel:
+            subject_bits.append(args.channel)
+        subject_bits.append(args.title or "New YouTube Video")
+        subject = " — ".join(subject_bits)
+
+        sendEmail(body, recipients, subject=subject)

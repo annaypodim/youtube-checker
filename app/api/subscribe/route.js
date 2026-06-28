@@ -39,16 +39,18 @@ export async function POST(request) {
     );
   }
 
+  // User is already authenticated via account — mark as verified immediately.
   const { error } = await supabase.from('subscriptions').insert({
     email: normalized.email,
     channel_url: normalized.channelUrl,
     channel_id: channelId,
+    status: 'verified',
   });
 
   if (error) {
     if (error.code === '23505') {
       return NextResponse.json({
-        message: `You're already subscribed to ${normalized.channelUrl} with ${normalized.email}.`,
+        message: `You're already subscribed to ${normalized.channelUrl}.`,
         subscription: { ...normalized, channelId },
       });
     }
@@ -60,7 +62,7 @@ export async function POST(request) {
   }
 
   return NextResponse.json({
-    message: `Subscribed ${normalized.email} to ${normalized.channelUrl}. Summaries will arrive when new videos drop.`,
+    message: `Subscribed to ${normalized.channelUrl}. Summaries will arrive when new videos drop.`,
     subscription: { ...normalized, channelId },
   });
 }
