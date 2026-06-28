@@ -24,6 +24,13 @@ export default function DashboardPage() {
   const [subsError, setSubsError] = useState('');
   const [deletingId, setDeletingId] = useState(null);
 
+  // Newsletter state
+  const [viewMode, setViewMode] = useState('individual'); // 'individual' | 'newsletters'
+  const [newsletters, setNewsletters] = useState([]);
+  const [loadingNewsletters, setLoadingNewsletters] = useState(false);
+  const [expandedNewsletterId, setExpandedNewsletterId] = useState(null);
+  const [newsletterStatus, setNewsletterStatus] = useState({ id: null, loading: false });
+
   useEffect(() => {
     async function checkSession() {
       try {
@@ -67,6 +74,26 @@ export default function DashboardPage() {
     if (!showManager) fetchSubscriptions();
     setShowManager((prev) => !prev);
   }
+
+  const fetchNewsletters = useCallback(async () => {
+    setLoadingNewsletters(true);
+    try {
+      const supabase = getSupabaseBrowser();
+      const { data, error } = await supabase.from('newsletters').select('*').order('name');
+      if (error) throw error;
+      setNewsletters(data ?? []);
+    } catch (err) {
+      console.error('Failed to load newsletters', err);
+    } finally {
+      setLoadingNewsletters(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (viewMode === 'newsletters' && newsletters.length === 0) {
+      fetchNewsletters();
+    }
+  }, [viewMode, newsletters.length, fetchNewsletters]);
 
   async function handleDelete(channelUrl) {
     setDeletingId(channelUrl);
@@ -142,6 +169,40 @@ export default function DashboardPage() {
         <p style={{ fontFamily: 'Arial, sans-serif', color: 'var(--muted)', textAlign: 'center' }}>Loading…</p>
       </main>
     );
+  }
+
+  async function handleNewsletterAction(newsletterId, isSubscribed) {
+    setNewsletterStatus({ id: newsletterId, loading: true });
+    try {
+      const endpoint = isSubscribed ? '/api/newsletter/unsubscribe' : '/api/newsletter/subscribe';
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: userEmail, newsletterId }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message);
+      
+      // Update local state to reflect the change
+      setNewsletters(prev => prev.map(nl => {
+        if (nl.id !== newsletterId) return nl;
+        const subs = nl.subscribers || [];
+        return {
+          ...nl,
+          subscribers: isSubscribed ? subs.filter(e => e !== userEmail) : [...subs, userEmail]
+        };
+      }));
+      
+      setServerMessage(data.message);
+      setStatus('success');
+      setTimeout(() => setServerMessage(''), 4000);
+    } catch (err) {
+      setServerMessage(err.message);
+      setStatus('error');
+      setTimeout(() => setServerMessage(''), 4000);
+    } finally {
+      setNewsletterStatus({ id: null, loading: false });
+    }
   }
 
   return (
@@ -269,12 +330,45 @@ export default function DashboardPage() {
         </section>
       )}
 
-      {/* ── Subscribe form + info ──────────────────────────────────────── */}
+      {/* ── Subscribe form / Newsletters + info ──────────────────────── */}
       <section className="content-grid">
         <div className="form-card">
-          <div className="form-heading">
-            <h2>Subscribe to a channel</h2>
-            <p>Paste a YouTube channel URL below. Summaries will be sent to:</p>
+          <div className="form-heading" style={{ marginBottom: '24px' }}>
+            <div style={{ display: 'flex', gap: '4px', background: 'rgba(63,77,52,0.07)', borderRadius: '999px', padding: '4px', marginBottom: '20px' }}>
+              <button
+                type="button"
+                onClick={() => setViewMode('individual')}
+                style={{
+                  flex: 1, marginTop: 0, borderRadius: '999px', padding: '10px', fontSize: '0.92rem', fontWeight: '600',
+                  background: viewMode === 'individual' ? 'linear-gradient(135deg, var(--accent), var(--accent-dark))' : 'transparent',
+                  color: viewMode === 'individual' ? '#fff' : 'var(--muted)',
+                  boxShadow: viewMode === 'individual' ? '0 4px 12px rgba(140,53,29,0.2)' : 'none',
+                  transition: 'all 200ms ease',
+                }}
+              >
+                Individual Channels
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode('newsletters')}
+                style={{
+                  flex: 1, marginTop: 0, borderRadius: '999px', padding: '10px', fontSize: '0.92rem', fontWeight: '600',
+                  background: viewMode === 'newsletters' ? 'linear-gradient(135deg, var(--accent), var(--accent-dark))' : 'transparent',
+                  color: viewMode === 'newsletters' ? '#fff' : 'var(--muted)',
+                  boxShadow: viewMode === 'newsletters' ? '0 4px 12px rgba(140,53,29,0.2)' : 'none',
+                  transition: 'all 200ms ease',
+                }}
+              >
+                Newsletters
+              </button>
+            </div>
+          </div>
+
+          {viewMode === 'individual' ? (
+            <>
+              <div className="form-heading">
+                <h2>Subscribe to a channel</h2>
+                <p>Paste a YouTube channel URL below. Summaries will be sent to:</p>
             <div style={styles.emailPill}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, color: 'var(--accent)' }}>
                 <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
@@ -310,10 +404,107 @@ export default function DashboardPage() {
             </div>
           </form>
 
-          {(serverMessage || status === 'success') && (
-            <div className={`status-panel ${status}`} aria-live="polite">
-              {status === 'success' ? <strong>Subscription active</strong> : null}
-              {serverMessage ? <p>{serverMessage}</p> : null}
+              {(serverMessage || status === 'success') && viewMode === 'individual' && (
+                <div className={`status-panel ${status}`} aria-live="polite">
+                  {status === 'success' ? <strong>Subscription active</strong> : null}
+                  {serverMessage ? <p>{serverMessage}</p> : null}
+                </div>
+              )}
+            </>
+          ) : (
+            <div>
+              <h2 style={{ fontSize: '1.4rem', marginBottom: '16px' }}>Curated Newsletters</h2>
+              <p style={{ fontFamily: 'Arial, sans-serif', color: 'var(--muted)', marginBottom: '24px' }}>
+                Discover themed collections of YouTube channels. Receive a single, curated digest summarizing all the latest videos.
+              </p>
+
+              {serverMessage && viewMode === 'newsletters' && (
+                <div className={`status-panel ${status}`} aria-live="polite" style={{ marginBottom: '20px' }}>
+                  <p>{serverMessage}</p>
+                </div>
+              )}
+
+              {loadingNewsletters ? (
+                <p style={{ fontFamily: 'Arial, sans-serif', color: 'var(--muted)' }}>Loading newsletters...</p>
+              ) : newsletters.length === 0 ? (
+                <p style={{ fontFamily: 'Arial, sans-serif', color: 'var(--muted)' }}>No newsletters available at this time.</p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  {newsletters.map((nl) => {
+                    const isSubscribed = (nl.subscribers || []).includes(userEmail);
+                    const isExpanded = expandedNewsletterId === nl.id;
+                    const channelsList = Object.entries(nl.channels || {});
+                    const isLoading = newsletterStatus.id === nl.id && newsletterStatus.loading;
+                    
+                    return (
+                      <div key={nl.id} style={{ ...styles.subCard, padding: '20px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px' }}>
+                          <div>
+                            <h3 style={{ margin: '0 0 6px 0', fontSize: '1.15rem' }}>{nl.name}</h3>
+                            <p style={{ margin: 0, fontFamily: 'Arial, sans-serif', fontSize: '0.9rem', color: 'var(--muted)', lineHeight: '1.4' }}>
+                              {nl.description}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleNewsletterAction(nl.id, isSubscribed)}
+                            disabled={isLoading}
+                            style={{
+                              marginTop: 0,
+                              padding: '8px 16px',
+                              fontSize: '0.84rem',
+                              whiteSpace: 'nowrap',
+                              background: isSubscribed ? 'transparent' : 'linear-gradient(135deg, var(--accent), var(--accent-dark))',
+                              color: isSubscribed ? 'var(--accent-dark)' : '#fff',
+                              border: isSubscribed ? '1px solid rgba(140,53,29,0.4)' : '1px solid transparent',
+                              opacity: isLoading ? 0.7 : 1,
+                            }}
+                          >
+                            {isLoading ? '...' : isSubscribed ? 'Unsubscribe' : 'Subscribe'}
+                          </button>
+                        </div>
+                        
+                        {channelsList.length > 0 && (
+                          <div style={{ marginTop: '16px' }}>
+                            <button
+                              type="button"
+                              onClick={() => setExpandedNewsletterId(isExpanded ? null : nl.id)}
+                              style={{
+                                background: 'none', border: 'none', padding: 0, margin: 0, color: 'var(--muted)',
+                                fontFamily: 'Arial, sans-serif', fontSize: '0.85rem', cursor: 'pointer',
+                                display: 'flex', alignItems: 'center', gap: '4px'
+                              }}
+                            >
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ transform: isExpanded ? 'rotate(180deg)' : 'none', transition: 'transform 150ms ease' }}>
+                                <polyline points="6 9 12 15 18 9"></polyline>
+                              </svg>
+                              {channelsList.length} channels
+                            </button>
+                            
+                            {isExpanded && (
+                              <ul style={{ margin: '8px 0 0 0', padding: '0 0 0 20px', fontFamily: 'Arial, sans-serif', fontSize: '0.85rem', color: 'var(--muted)' }}>
+                                {channelsList.map(([cname, cid]) => (
+                                  <li key={cid} style={{ marginBottom: '4px' }}>
+                                    <a href={`https://www.youtube.com/@${cname}`} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', textDecoration: 'none' }}>
+                                      {cname}
+                                    </a>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              
+              {!loadingNewsletters && newsletters.length > 0 && (
+                <p style={{ textAlign: 'center', fontFamily: 'Arial, sans-serif', fontSize: '0.85rem', color: 'var(--muted)', marginTop: '24px' }}>
+                  More coming soon!
+                </p>
+              )}
             </div>
           )}
         </div>

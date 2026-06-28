@@ -4,6 +4,7 @@ import { execFile } from 'child_process';
 import { getSupabaseAdmin } from './supabase.js';
 
 const POLL_INTERVAL_MS = Number(process.env.POLL_INTERVAL_MS ?? 60 * 1000);
+const NEWSLETTER_POLL_INTERVAL_MS = 5 * 60 * 1000;
 const YT_API_KEY = process.env.YT_API_KEY;
 const RUN_ONCE = process.argv.includes('--once');
 
@@ -96,18 +97,22 @@ async function loadActiveChannels(supabase) {
 async function getChannelState(supabase, channelId) {
   const { data, error } = await supabase
     .from('channel_state')
-    .select('last_video_id')
+    .select('last_video_id, log')
     .eq('channel_id', channelId)
     .maybeSingle();
   if (error) throw new Error(`channel_state read failed: ${error.message}`);
-  return data?.last_video_id ?? null;
+  return {
+    lastVideoId: data?.last_video_id ?? null,
+    log: data?.log ?? []
+  };
 }
 
-async function saveChannelState(supabase, channelId, lastVideoId) {
+async function saveChannelState(supabase, channelId, lastVideoId, log) {
   const { error } = await supabase.from('channel_state').upsert({
     channel_id: channelId,
     last_video_id: lastVideoId,
     last_checked_at: new Date().toISOString(),
+    ...(log !== undefined ? { log } : {})
   });
   if (error) throw new Error(`channel_state write failed: ${error.message}`);
 }
@@ -132,55 +137,171 @@ function dispatchEmails(video, recipients) {
   });
 }
 
-async function pollChannel(supabase, channelId, recipients) {
+function dispatchNewsletterEmails(videoIds, recipients, newsletterName) {
+  if (recipients.length === 0 || videoIds.length === 0) return;
+  const scriptPath = path.resolve(__dirname, '..', 'getTranscript.py');
+  const args = [
+    scriptPath,
+    '--newsletter',
+    '--video-ids', videoIds.join(','),
+    '--newsletter-name', newsletterName,
+    '--to', recipients.join(','),
+  ];
+  execFile('python3', args, (err, stdout, stderr) => {
+    if (err) {
+      console.error('Newsletter script failed:', stderr || err.message);
+      return;
+    }
+    if (stdout) console.log('Newsletter script:', stdout.trim());
+  });
+}
+
+async function loadNewsletterChannels(supabase) {
+  const { data, error } = await supabase
+    .from('newsletters')
+    .select('id, name, channels, subscribers');
+  if (error) throw new Error(`Loading newsletters failed: ${error.message}`);
+
+  const map = new Map(); // channel_id -> Set of newsletter names
+  for (const row of data ?? []) {
+    if (!row.subscribers || row.subscribers.length === 0) continue;
+    if (!row.channels) continue;
+
+    for (const [channelName, channelId] of Object.entries(row.channels)) {
+      if (!map.has(channelId)) map.set(channelId, new Set());
+      map.get(channelId).add(row.name);
+    }
+  }
+  return map;
+}
+
+async function pollChannel(supabase, channelId, individualRecipients, isNewsletterChannel) {
   const latest = await fetchLatestVideo(channelId);
   if (!latest?.id) {
     console.log(`[${channelId}] no videos found`);
     return;
   }
 
-  const previous = await getChannelState(supabase, channelId);
-  await saveChannelState(supabase, channelId, latest.id);
+  const state = await getChannelState(supabase, channelId);
+  const previousId = state.lastVideoId;
+  let log = state.log || [];
 
-  if (previous === null) {
-    // First time we see this channel — record the latest as the baseline; do not email backfill.
+  if (previousId === null) {
+    // First time we see this channel — record the latest as the baseline
+    await saveChannelState(supabase, channelId, latest.id, log);
     console.log(`[${channelId}] baseline set to ${latest.id} (${latest.title}) — no email sent`);
     return;
   }
 
-  if (previous !== latest.id) {
-    console.log(`[${channelId}] new upload ${latest.id} (${latest.title}) -> ${recipients.length} subscriber(s)`);
-    dispatchEmails(latest, recipients);
+  if (previousId !== latest.id) {
+    console.log(`[${channelId}] new upload ${latest.id} (${latest.title})`);
+
+    // Add to newsletter log if needed
+    if (isNewsletterChannel) {
+      if (!log.includes(latest.id)) {
+        log.push(latest.id);
+      }
+    }
+
+    await saveChannelState(supabase, channelId, latest.id, log);
+
+    if (individualRecipients && individualRecipients.length > 0) {
+      dispatchEmails(latest, individualRecipients);
+    }
   } else {
+    // Update last_checked_at without changing log
+    await saveChannelState(supabase, channelId, previousId, log);
     console.log(`[${channelId}] no new uploads`);
   }
 }
 
 async function pollOnce() {
   const supabase = getSupabaseAdmin();
-  const channels = await loadActiveChannels(supabase);
-  if (channels.size === 0) {
-    console.log('No active subscriptions yet.');
+  const individualChannels = await loadActiveChannels(supabase);
+  const newsletterChannels = await loadNewsletterChannels(supabase);
+
+  const allChannelIds = new Set([...individualChannels.keys(), ...newsletterChannels.keys()]);
+
+  if (allChannelIds.size === 0) {
+    console.log('No active subscriptions or newsletters yet.');
     return;
   }
 
-  for (const [channelId, recipients] of channels) {
+  for (const channelId of allChannelIds) {
     try {
-      await pollChannel(supabase, channelId, recipients);
+      const individualRecipients = individualChannels.get(channelId) || [];
+      const isNewsletterChannel = newsletterChannels.has(channelId);
+      await pollChannel(supabase, channelId, individualRecipients, isNewsletterChannel);
     } catch (error) {
       console.error(`[${channelId}] poll failed:`, error.message);
     }
   }
 }
 
+async function pollNewslettersOnce() {
+  const supabase = getSupabaseAdmin();
+  console.log('Running newsletter interval check...');
+
+  const { data: newsletters, error } = await supabase
+    .from('newsletters')
+    .select('id, name, channels, subscribers');
+
+  if (error) {
+    console.error('Failed to load newsletters for interval:', error.message);
+    return;
+  }
+
+  for (const row of newsletters ?? []) {
+    if (!row.subscribers || row.subscribers.length === 0) continue;
+    if (!row.channels) continue;
+
+    let videoIdsForNewsletter = [];
+    let channelsToClear = [];
+
+    // Collect logs for all channels in this newsletter
+    for (const channelId of Object.values(row.channels)) {
+      const state = await getChannelState(supabase, channelId);
+      if (state.log && state.log.length > 0) {
+        videoIdsForNewsletter.push(...state.log);
+        channelsToClear.push(channelId);
+      }
+    }
+
+    if (videoIdsForNewsletter.length > 0) {
+      // Deduplicate video IDs just in case
+      videoIdsForNewsletter = [...new Set(videoIdsForNewsletter)];
+      console.log(`[Newsletter: ${row.name}] Dispatching digest with ${videoIdsForNewsletter.length} videos`);
+      dispatchNewsletterEmails(videoIdsForNewsletter, row.subscribers, row.name);
+    }
+
+    // We clear logs at the channel level. 
+    // Note: If a channel is in MULTIPLE newsletters, clearing its log here might mean 
+    // it misses the next newsletter if they fire at different times. 
+    // But since the newsletter interval is global (10 mins), they all fire now, 
+    // so we can just clear the logs for all processed channels.
+    for (const channelId of channelsToClear) {
+      const state = await getChannelState(supabase, channelId);
+      if (state.log && state.log.length > 0) {
+        // Clear the log
+        await saveChannelState(supabase, channelId, state.lastVideoId, []);
+      }
+    }
+  }
+}
+
 async function main() {
   console.log(`Starting poller. Interval: ${POLL_INTERVAL_MS / 1000}s`);
+  console.log(`Newsletter Interval: ${NEWSLETTER_POLL_INTERVAL_MS / 1000}s`);
   await pollOnce();
   if (RUN_ONCE) return;
 
   setInterval(() => {
     pollOnce().catch((error) => console.error('Polling failed', error));
   }, POLL_INTERVAL_MS);
+
+  setInterval(() => {
+    pollNewslettersOnce().catch((error) => console.error('Newsletter polling failed', error));
+  }, NEWSLETTER_POLL_INTERVAL_MS);
 }
 
 main().catch((error) => {

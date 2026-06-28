@@ -5,6 +5,8 @@ import html
 import os
 import re
 import smtplib
+import json
+import urllib.request
 from email.mime.text import MIMEText
 from serpapi import GoogleSearch #transcript api
 from google import genai as gemini #llm for summary
@@ -15,6 +17,8 @@ geminiKey = os.getenv("gemini")
 gmailAddress = os.getenv("GMAIL_ADDRESS")
 gmailAppPassword = os.getenv("GMAIL_APP_PASSWORD")
 notifyEmail = os.getenv("NOTIFY_EMAIL")
+ytApiKey = os.getenv("YT_API_KEY")
+
 
 ID = ""
 
@@ -28,10 +32,14 @@ def getTranscript(id):
     "api_key": serpKey
     }
 
-    search = GoogleSearch(params)
-    results = search.get_dict()
-
-    transcript = results.get("transcript", [])
+    try:
+        search = GoogleSearch(params)
+        results = search.get_dict()
+        transcript = results.get("transcript", [])
+    except Exception as e:
+        print(f"Error fetching transcript for {id}: {e}")
+        transcript = []
+        
     transcriptStr = ""
     transcriptWithTimestamps = ""
     for entry in transcript:
@@ -108,7 +116,7 @@ def geminiSummarize(transcript):
     )
 
     summary = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model="gemini-3.5-flash",
         contents=prompt,
     )
 
@@ -117,11 +125,15 @@ def geminiSummarize(transcript):
     text = re.sub(r"\s*```$", "", text)
     return text
 
-def geminiGetClip(summary, transcriptWithTimestamps):
+def geminiGetClip(summary, transcriptWithTimestamps, max_clips=None):
     client = gemini.Client(
         api_key=geminiKey,
         http_options={'api_version': 'v1beta'}
     )
+
+    clip_instruction = ""
+    if max_clips:
+        clip_instruction = f"IMPORTANT: Extract no more than {max_clips} clips TOTAL across all content.\n"
 
     prompt = (
         "You are an expert audio/video transcript analyst and content curator. Your task is to extract the most interesting, engaging, or \"cool\" moments mentioned in a provided summary and map them to their exact timestamps in the transcript.\n\n"
@@ -130,6 +142,7 @@ def geminiGetClip(summary, transcriptWithTimestamps):
         "Transcript: " + transcriptWithTimestamps + "\n\n"
         "### Instructions:\n"
         "1. Analyze the <summary> to identify the most compelling, interesting, or cool moments. You do NOT need to cover every point in the summary—focus only on the absolute best highlights.\n"
+        f"{clip_instruction}"
         "2. Locate ALL continuous blocks of dialogue in the <transcript> that correspond to these selected highlight points. A single highlight might be discussed in multiple separate portions of the transcript.\n"
         "3. For each selected highlight, create a concise title strictly between 5 and 10 words long that captures why the moment is interesting.\n"
         "4. Determine the starting timestamp (the time of the first line discussing the point) and the ending timestamp (the start time of the line immediately following the end of the point) for EVERY portion where that highlight is discussed.\n"
@@ -145,7 +158,7 @@ def geminiGetClip(summary, transcriptWithTimestamps):
         
 
     urls = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model="gemini-3.5-flash",
         contents=prompt,
     )
 
@@ -241,6 +254,39 @@ def buildEmailBody(summary_html, title, channel, published, clips, video_id):
         + "</div>"
     )
 
+def buildNewsletterBody(summary_html, newsletter_name, clips_data):
+    safe_name = html.escape(newsletter_name or "Your Newsletter Digest")
+
+    header = (
+        f'<h1 style="margin:0 0 16px 0; font-family: Georgia, serif;">{safe_name}</h1>'
+        f'<p style="margin:0 0 22px 0; color:#566252;">Here is your curated digest of the latest videos.</p>'
+        '<hr style="border: 0; border-top: 1px solid #dce8d5; margin-bottom: 22px;" />'
+    )
+
+    clips_html = ""
+    if clips_data:
+        clips_html += '<p><b>Top Highlights Across All Videos</b></p>'
+        for video_id, clips in clips_data.items():
+            for clip in clips:
+                clip_title, start_ts, end_ts = clip
+                start_sec = timestamp_to_seconds(start_ts)
+                end_sec = timestamp_to_seconds(end_ts)
+                url = f"http://localhost:3000/clip/{video_id}?start={start_sec}&end={end_sec}"
+                clips_html += (
+                    f'<p style="margin-bottom: 4px;"><b>{html.escape(clip_title)}</b></p>'
+                    f'<p style="margin-top: 0; margin-bottom: 16px;"><a href="{url}">{url}</a></p>'
+                )
+
+    return (
+        '<div style="font-family: -apple-system, BlinkMacSystemFont, \'Segoe UI\', '
+        "Helvetica, Arial, sans-serif; font-size: 14px; line-height: 1.55; "
+        'color: #1f2a1f; max-width: 680px;">'
+        + header
+        + summary_html
+        + clips_html
+        + "</div>"
+    )
+
 def authEmail(recipients, channel, verify_url):
     if not recipients:
         print("No recipients provided; skipping send.")
@@ -296,7 +342,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # --auth-mode sends a verification email instead of a transcript summary.
     parser.add_argument("--auth-mode", action="store_true", help="Send a verification email instead of a summary.")
+    parser.add_argument("--newsletter", action="store_true", help="Send a newsletter summarizing multiple videos.")
     parser.add_argument("video_id", nargs="?", default="", help="YouTube video ID (required in summary mode).")
+    parser.add_argument("--video-ids", default="", help="Comma-separated video IDs for newsletter mode.")
+    parser.add_argument("--newsletter-name", default="")
     parser.add_argument("--title", default="")
     parser.add_argument("--channel", default="")
     parser.add_argument("--published", default="")
@@ -313,6 +362,104 @@ if __name__ == "__main__":
     if args.auth_mode:
         verify_url = f"{args.base_url.rstrip('/')}/verify?token={args.token}"
         authEmail(recipients, args.channel, verify_url)
+    elif args.newsletter:
+        if not args.video_ids:
+            raise SystemExit("video_ids are required in newsletter mode.")
+            
+        video_ids = [vid.strip() for vid in args.video_ids.split(",")]
+        
+        # Fetch video metadata from YouTube API
+        video_metadata = {}
+        if ytApiKey:
+            try:
+                url = f"https://www.googleapis.com/youtube/v3/videos?part=snippet&id={','.join(video_ids)}&key={ytApiKey}"
+                req = urllib.request.Request(url)
+                with urllib.request.urlopen(req) as response:
+                    data = json.loads(response.read().decode())
+                    for item in data.get("items", []):
+                        video_metadata[item["id"]] = {
+                            "title": item["snippet"]["title"],
+                            "channel": item["snippet"]["channelTitle"]
+                        }
+            except Exception as e:
+                print(f"Error fetching YouTube metadata: {e}")
+                
+        # Get transcripts for all videos
+        combined_transcript = ""
+        transcripts_with_timestamps = {}
+        for vid in video_ids:
+            t_str, t_ts = getTranscript(vid)
+            if t_str:
+                meta = video_metadata.get(vid, {"title": "Unknown Title", "channel": "Unknown Channel"})
+                combined_transcript += f"\n\n--- VIDEO: {meta['title']} (Channel: {meta['channel']}) ---\n"
+                combined_transcript += t_str
+                transcripts_with_timestamps[vid] = t_ts
+                
+        if not combined_transcript.strip():
+            print("No transcripts found for any videos in the newsletter.")
+            exit(0)
+            
+        # Summarize the combined transcript
+        # We use a slightly adjusted prompt to handle multiple videos
+        client = gemini.Client(api_key=geminiKey, http_options={'api_version': 'v1beta'})
+        prompt = (
+            f"You are writing a newsletter digest named '{args.newsletter_name}'. "
+            "Below are the transcripts for several recent YouTube videos. "
+            "Please provide a cohesive summary covering the key points from ALL the videos provided. "
+            "Format the output strictly as HTML suitable for an email body. "
+            "Use headings (<h2>) for each video's summary, and provide a <ul> of actionable takeaways at the end.\n\n"
+            "TRANSCRIPTS:\n" + combined_transcript
+        )
+        
+        summary_response = client.models.generate_content(
+            model="gemini-3.5-flash",
+            contents=prompt,
+        )
+        summary = summary_response.text.strip()
+        summary = re.sub(r"^```(?:html)?\s*", "", summary)
+        summary = re.sub(r"\s*```$", "", summary)
+        
+        # Get clips, limiting to 3-5 overall
+        # We'll just ask Gemini to pick the best 4 clips from the combined transcripts
+        # But `geminiGetClip` expects a single transcript string with timestamps.
+        combined_ts = ""
+        for vid, t_ts in transcripts_with_timestamps.items():
+            meta = video_metadata.get(vid, {})
+            combined_ts += f"\n\n--- VIDEO ID: {vid} ({meta.get('title')}) ---\n"
+            combined_ts += t_ts
+            
+        # We need a custom clip getter for the newsletter to handle the VIDEO ID markers
+        clip_prompt = (
+            "You are curating highlights for a newsletter. Identify the 3 to 5 absolute best moments "
+            "from the following summaries and transcripts.\n\n"
+            "Summary:\n" + summary + "\n\n"
+            "Transcripts (separated by VIDEO ID markers):\n" + combined_ts + "\n\n"
+            "Output exactly 3 to 5 highlights in this format:\n"
+            "[Video ID],[5-10 Word Title],[Start Time],[End Time]\n"
+        )
+        clip_res = client.models.generate_content(
+            model="gemini-3.5-flash",
+            contents=clip_prompt,
+        )
+        
+        clip_text = clip_res.text.strip()
+        clip_text = re.sub(r"^```.*?\n", "", clip_text)
+        clip_text = re.sub(r"\n```$", "", clip_text)
+        
+        clips_data = {} # vid -> [[title, start, end]]
+        for line in clip_text.split('\n'):
+            line = line.strip()
+            if not line: continue
+            parts = [p.strip() for p in line.split(',')]
+            if len(parts) >= 4:
+                vid, title, start, end = parts[0], parts[1], parts[2], parts[3]
+                if vid not in clips_data:
+                    clips_data[vid] = []
+                clips_data[vid].append([title, start, end])
+
+        body = buildNewsletterBody(summary, args.newsletter_name, clips_data)
+        sendEmail(body, recipients, subject=f"Your {args.newsletter_name} Digest")
+
     else:
         if not args.video_id:
             raise SystemExit("video_id is required in summary mode.")
