@@ -7,10 +7,10 @@ import html as html_mod
 import json
 import os
 import re
-import smtplib
+import resend
 import urllib.request
 from datetime import datetime
-from email.mime.text import MIMEText
+
 from typing import List, Optional
 
 from fastapi import FastAPI, BackgroundTasks
@@ -23,9 +23,9 @@ from google import genai as gemini
 
 SERP_KEY = os.getenv("serp", "")
 GEMINI_KEY = os.getenv("gemini", "")
-GMAIL_ADDRESS = os.getenv("GMAIL_ADDRESS", "")
-GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD", "")
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
 NOTIFY_EMAIL = os.getenv("NOTIFY_EMAIL", "")
+FROM_EMAIL = "onboarding@resend.dev"
 YT_API_KEY = os.getenv("YT_API_KEY", "")
 
 # ── FastAPI app ──────────────────────────────────────────────────────────────
@@ -366,7 +366,7 @@ def send_email(body: str, recipients: list, subject: str = "New YouTube Video Su
         print("No recipients provided; skipping send.")
         return
 
-    # Log the full email output for debugging (visible in Render logs)
+    # Log the email output for debugging (visible in Render logs)
     print("=" * 60)
     print(f"EMAIL — Subject: {subject}")
     print(f"EMAIL — To: {', '.join(recipients)}")
@@ -377,19 +377,19 @@ def send_email(body: str, recipients: list, subject: str = "New YouTube Video Su
         print(f"... [truncated, {len(body) - 2000} more chars]")
     print("=" * 60)
 
-    try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-            server.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
-            for recipient in recipients:
-                msg = MIMEText(body, "html")
-                msg["Subject"] = subject
-                msg["From"] = GMAIL_ADDRESS
-                msg["To"] = recipient
-                server.send_message(msg)
-                print(f"Email sent to {recipient}")
-    except OSError as e:
-        print(f"EMAIL SEND FAILED (SMTP blocked?): {e}")
-        print("The email content above was generated successfully but could not be delivered.")
+    resend.api_key = RESEND_API_KEY
+
+    for recipient in recipients:
+        try:
+            r = resend.Emails.send({
+                "from": FROM_EMAIL,
+                "to": recipient,
+                "subject": subject,
+                "html": body,
+            })
+            print(f"Email sent to {recipient} (id: {r.get('id', 'unknown')})")
+        except Exception as e:
+            print(f"Email to {recipient} failed: {e}")
 
 
 # ── Background task runners ──────────────────────────────────────────────────
