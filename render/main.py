@@ -27,6 +27,7 @@ RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
 NOTIFY_EMAIL = os.getenv("NOTIFY_EMAIL", "")
 FROM_EMAIL = "onboarding@resend.dev"
 YT_API_KEY = os.getenv("YT_API_KEY", "")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
 # ── FastAPI app ──────────────────────────────────────────────────────────────
 
@@ -308,7 +309,7 @@ def build_email_body(summary_html, title, channel, published, clips, video_id):
             clip_title, start_ts, end_ts = clip
             start_sec = timestamp_to_seconds(start_ts)
             end_sec = timestamp_to_seconds(end_ts)
-            url = f"https://www.youtube.com/watch?v={video_id}&t={start_sec}"
+            url = f"{FRONTEND_URL}/clip/{video_id}?start={start_sec}&end={end_sec}"
             clips_html += (
                 f'<p style="margin-bottom: 4px;"><b>{html_mod.escape(clip_title)}</b></p>'
                 f'<p style="margin-top: 0; margin-bottom: 16px;"><a href="{url}">{url}</a></p>'
@@ -342,7 +343,7 @@ def build_newsletter_body(summary_html, newsletter_name, clips_data):
                 clip_title, start_ts, end_ts = clip
                 start_sec = timestamp_to_seconds(start_ts)
                 end_sec = timestamp_to_seconds(end_ts)
-                url = f"https://www.youtube.com/watch?v={video_id}&t={start_sec}"
+                url = f"{FRONTEND_URL}/clip/{video_id}?start={start_sec}&end={end_sec}"
                 clips_html += (
                     f'<p style="margin-bottom: 4px;"><b>{html_mod.escape(clip_title)}</b></p>'
                     f'<p style="margin-top: 0; margin-bottom: 16px;"><a href="{url}">{url}</a></p>'
