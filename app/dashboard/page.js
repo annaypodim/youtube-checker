@@ -278,53 +278,59 @@ export default function DashboardPage() {
               No subscriptions yet. Add one using the form below.
             </p>
           ) : (
-            <div style={styles.subsGrid}>
-              {subscriptions.map((sub) => (
-                <div key={sub.channel_url} style={styles.subCard}>
-                  {/* Status badge */}
-                  <span style={{
-                    ...styles.badge,
-                    background: sub.status === 'verified' ? 'rgba(79,127,70,0.12)' : 'rgba(184,76,42,0.12)',
-                    color: sub.status === 'verified' ? 'var(--success-text, #2e5a28)' : 'var(--error-text, #8c351d)',
-                  }}>
-                    {sub.status === 'verified' ? '● Active' : '○ Pending'}
-                  </span>
-
-                  {/* Channel URL */}
-                  <a
-                    href={sub.channel_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    style={styles.channelLink}
-                    title={sub.channel_url}
-                  >
-                    {sub.channel_url.replace(/^https?:\/\/(www\.)?youtube\.com\//, '')}
-                  </a>
-
-                  {/* Date */}
-                  <span style={styles.subDate}>
-                    Added {new Date(sub.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
-                  </span>
-
-                  {/* Delete */}
-                  <button
-                    type="button"
-                    onClick={() => handleDelete(sub.channel_url)}
-                    disabled={deletingId === sub.channel_url}
-                    style={styles.deleteBtn}
-                    aria-label={`Remove subscription to ${sub.channel_url}`}
-                  >
-                    {deletingId === sub.channel_url ? (
-                      '…'
-                    ) : (
-                      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" />
-                        <path d="M10 11v6M14 11v6" /><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" />
-                      </svg>
-                    )}
-                  </button>
-                </div>
-              ))}
+            <div style={{ overflowX: 'auto', border: '1px solid rgba(63,77,52,0.15)', borderRadius: '12px' }}>
+              <table style={styles.table}>
+                <thead>
+                  <tr>
+                    <th style={styles.th}>Channel</th>
+                    <th style={styles.th}>Status</th>
+                    <th style={styles.th}>Date Added</th>
+                    <th style={styles.th}>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {subscriptions.map((sub) => (
+                    <tr key={sub.channel_url} style={styles.tr}>
+                      <td style={styles.td}>
+                        <a
+                          href={sub.channel_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={styles.channelLink}
+                          title={sub.channel_url}
+                        >
+                          {sub.channel_url.replace(/^https?:\/\/(www\.)?youtube\.com\//, '')}
+                        </a>
+                      </td>
+                      <td style={styles.td}>
+                        <span style={{
+                          ...styles.badge,
+                          background: sub.status === 'verified' ? 'rgba(79,127,70,0.12)' : 'rgba(184,76,42,0.12)',
+                          color: sub.status === 'verified' ? 'var(--success-text, #2e5a28)' : 'var(--error-text, #8c351d)',
+                        }}>
+                          {sub.status === 'verified' ? 'Active' : 'Pending'}
+                        </span>
+                      </td>
+                      <td style={styles.td}>
+                        <span style={styles.subDate}>
+                          {new Date(sub.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                        </span>
+                      </td>
+                      <td style={styles.td}>
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(sub.channel_url)}
+                          disabled={deletingId === sub.channel_url}
+                          style={styles.tableDeleteBtn}
+                          aria-label={`Remove subscription to ${sub.channel_url}`}
+                        >
+                          {deletingId === sub.channel_url ? 'Deleting...' : 'Delete'}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </section>
@@ -604,5 +610,41 @@ const styles = {
     alignItems: 'center',
     justifyContent: 'center',
     transition: 'background 160ms ease, color 160ms ease, border-color 160ms ease',
+  },
+  table: {
+    width: '100%',
+    borderCollapse: 'collapse',
+    fontFamily: 'Arial, sans-serif',
+    fontSize: '0.9rem',
+    background: 'rgba(255,250,242,0.7)',
+  },
+  th: {
+    textAlign: 'left',
+    padding: '12px 16px',
+    borderBottom: '1px solid rgba(63,77,52,0.2)',
+    color: 'var(--muted)',
+    fontWeight: '600',
+    fontSize: '0.82rem',
+    textTransform: 'uppercase',
+    letterSpacing: '0.02em',
+  },
+  td: {
+    padding: '12px 16px',
+    borderBottom: '1px solid rgba(63,77,52,0.1)',
+    verticalAlign: 'middle',
+  },
+  tr: {
+    transition: 'background 150ms ease',
+  },
+  tableDeleteBtn: {
+    marginTop: 0,
+    padding: '4px 10px',
+    fontSize: '0.78rem',
+    borderRadius: '6px',
+    background: 'transparent',
+    color: 'var(--error-text, #8c351d)',
+    border: '1px solid rgba(184,76,42,0.3)',
+    cursor: 'pointer',
+    transition: 'all 150ms ease',
   },
 };
