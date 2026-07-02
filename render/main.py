@@ -159,7 +159,7 @@ def gemini_summarize(transcript: str) -> str:
         "- Code snippets, commands, or syntax from the transcript must appear in "
         "<code> tags inline, or in <pre><code> blocks for multi-line code.\n"
         "- Do not generalize technical content. 'Use a loop' is wrong if the "
-        "video shows `for i in range(len(arr)):`."\n\n"
+        "video shows `for i in range(len(arr)):`.\n\n"
         "STYLE RULES:\n"
         "- Reuse the speaker's wording for technical and distinctive terms; do "
         "not paraphrase them.\n"
