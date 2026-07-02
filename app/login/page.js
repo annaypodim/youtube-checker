@@ -53,6 +53,31 @@ export default function LoginPage() {
     }
   }
 
+  async function handleResetPassword() {
+    if (!email) {
+      setMessageType('error');
+      setMessage('Enter your email address above, then click "Forgot password?"');
+      return;
+    }
+    setLoading(true);
+    setMessage('');
+    setMessageType('');
+    try {
+      const supabase = getSupabaseBrowser();
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/reset-password`,
+      });
+      if (error) throw error;
+      setMessageType('success');
+      setMessage('Password reset email sent! Check your inbox.');
+    } catch (err) {
+      setMessageType('error');
+      setMessage(err.message ?? 'Could not send reset email. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <main className="page-shell" style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
       {/* Back link */}
@@ -119,6 +144,28 @@ export default function LoginPage() {
             required
             autoComplete={tab === 'signup' ? 'new-password' : 'current-password'}
           />
+
+          {tab === 'signin' && (
+            <button
+              type="button"
+              onClick={handleResetPassword}
+              disabled={loading}
+              style={{
+                background: 'none',
+                border: 'none',
+                padding: 0,
+                marginTop: '6px',
+                fontFamily: 'Arial, sans-serif',
+                fontSize: '0.84rem',
+                color: 'var(--accent-dark)',
+                cursor: 'pointer',
+                textDecoration: 'underline',
+                opacity: loading ? 0.6 : 1,
+              }}
+            >
+              Forgot password?
+            </button>
+          )}
 
           <div className="form-actions">
             <button type="submit" disabled={loading} style={{ opacity: loading ? 0.7 : 1, cursor: loading ? 'wait' : 'pointer' }}>
