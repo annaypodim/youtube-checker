@@ -365,15 +365,31 @@ def send_email(body: str, recipients: list, subject: str = "New YouTube Video Su
     if not recipients:
         print("No recipients provided; skipping send.")
         return
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-        server.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
-        for recipient in recipients:
-            msg = MIMEText(body, "html")
-            msg["Subject"] = subject
-            msg["From"] = GMAIL_ADDRESS
-            msg["To"] = recipient
-            server.send_message(msg)
-            print(f"Email sent to {recipient}")
+
+    # Log the full email output for debugging (visible in Render logs)
+    print("=" * 60)
+    print(f"EMAIL — Subject: {subject}")
+    print(f"EMAIL — To: {', '.join(recipients)}")
+    print(f"EMAIL — Body length: {len(body)} chars")
+    print("-" * 60)
+    print(body[:2000])
+    if len(body) > 2000:
+        print(f"... [truncated, {len(body) - 2000} more chars]")
+    print("=" * 60)
+
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
+            for recipient in recipients:
+                msg = MIMEText(body, "html")
+                msg["Subject"] = subject
+                msg["From"] = GMAIL_ADDRESS
+                msg["To"] = recipient
+                server.send_message(msg)
+                print(f"Email sent to {recipient}")
+    except OSError as e:
+        print(f"EMAIL SEND FAILED (SMTP blocked?): {e}")
+        print("The email content above was generated successfully but could not be delivered.")
 
 
 # ── Background task runners ──────────────────────────────────────────────────
