@@ -61,6 +61,24 @@ export async function POST(request) {
     );
   }
 
+  // Register channel with PubSubHubbub via Edge Function (fire-and-forget)
+  try {
+    await fetch(
+      `${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/manage-websub`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
+        },
+        body: JSON.stringify({ action: 'subscribe', channel_id: channelId }),
+      }
+    );
+  } catch (websubErr) {
+    // Don't fail the subscription if WebSub registration fails — it can be retried
+    console.error('WebSub registration failed (non-fatal):', websubErr);
+  }
+
   return NextResponse.json({
     message: `Subscribed to ${normalized.channelUrl}. Summaries will arrive when new videos drop.`,
     subscription: { ...normalized, channelId },

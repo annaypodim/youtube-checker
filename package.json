@@ -4,8 +4,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
-    "poller:start": "node --env-file=.env src/poller.js"
+    "start": "next start"
   },
   "keywords": [],
   "author": "",
