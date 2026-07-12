@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: channel-digest-api
+    runtime: python
+    rootDir: render
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    plan: free
+    envVars:
+      - key: serp
+        sync: false
+      - key: gemini
+        sync: false
+      - key: GMAIL_ADDRESS
+        sync: false
+      - key: GMAIL_APP_PASSWORD
+        sync: false
+      - key: YT_API_KEY
+        sync: false
+      - key: NOTIFY_EMAIL
+        sync: false

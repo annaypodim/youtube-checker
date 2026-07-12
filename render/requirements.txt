@@ -1,0 +1,6 @@
+fastapi
+uvicorn[standard]
+serpapi
+google-search-results
+google-genai
+resend
