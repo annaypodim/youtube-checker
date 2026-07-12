@@ -1,7 +1,7 @@
 /**
  * newsletter-digest — Supabase Edge Function
  *
- * Triggered by pg_cron on a configurable interval (default: every 5 minutes).
+ * Triggered by pg_cron on a configurable interval (default: daily at 8 AM PST / 4 PM UTC).
  * Collects logged video IDs for each newsletter, sends them to Render FastAPI
  * for summarisation, then clears the logs.
  *

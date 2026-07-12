@@ -20,7 +20,7 @@ ALTER TABLE websub_subscriptions ENABLE ROW LEVEL SECURITY;
 CREATE EXTENSION IF NOT EXISTS pg_cron;
 CREATE EXTENSION IF NOT EXISTS pg_net;
 
--- 3. Newsletter digest cron job (every 5 minutes — change the cron expression to adjust)
+-- 3. Newsletter digest cron job (daily at 8 AM PST / 4 PM UTC — change the cron expression to adjust)
 -- ┌───────────── minute (*/5 = every 5 minutes)
 -- │ ┌─────────── hour
 -- │ │ ┌───────── day of month
@@ -30,15 +30,17 @@ CREATE EXTENSION IF NOT EXISTS pg_net;
 -- * * * * *
 --
 -- To change the interval, modify the cron expression below:
+--   Every 5 minutes:   '*/5 * * * *'
 --   Every 10 minutes:  '*/10 * * * *'
 --   Every 30 minutes:  '*/30 * * * *'
 --   Every hour:        '0 * * * *'
 --   Every 6 hours:     '0 */6 * * *'
 --   Daily at midnight: '0 0 * * *'
+--   Daily at 8 AM PST: '0 16 * * *'
 
 SELECT cron.schedule(
   'newsletter-digest',
-  '*/5 * * * *',
+  '0 16 * * *',
   $$
   SELECT net.http_post(
     url := 'https://wduoislmkwucbfdpthii.supabase.co/functions/v1/newsletter-digest',
